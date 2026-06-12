@@ -1,0 +1,48 @@
+{
+  "name": "smart-rehab-game",
+  "version": "1.0.0",
+  "description": "智慧体育康复训练桌面游戏 - 供康复师带领运动损伤患者完成低强度动作练习",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "concurrently \"npm run dev:react\" \"npm run dev:electron\"",
+    "dev:react": "vite",
+    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "electron:build": "npm run build && electron-builder"
+  },
+  "keywords": ["rehabilitation", "sports", "training", "game", "electron"],
+  "author": "Smart Rehab Team",
+  "license": "MIT",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.0",
+    "recharts": "^2.10.3",
+    "zustand": "^4.4.7",
+    "lucide-react": "^0.294.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.37",
+    "@types/react-dom": "^18.2.15",
+    "@vitejs/plugin-react": "^4.2.0",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^27.1.3",
+    "electron-builder": "^24.6.4",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.2",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.smartrehab.game",
+    "productName": "智慧康复训练系统",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ]
+  }
+}
