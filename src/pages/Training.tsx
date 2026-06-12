@@ -11,11 +11,14 @@ import {
   Heart,
   Video,
   VideoOff,
-  X
+  X,
+  AlertCircle,
+  Loader2,
+  Users
 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useMotionSimulator, computeScores } from '../hooks/useMotionSimulator';
-import type { ActionResult, PainLevel, TrainingSession } from '../types';
+import type { ActionResult, PainLevel, TrainingSession, Patient, BodyPart } from '../types';
 import {
   LineChart,
   Line,
@@ -34,23 +37,37 @@ const phaseText: Record<string, string> = {
   rest: '休息中'
 };
 
+const bodyPartMap: Record<BodyPart, string> = {
+  shoulder: '肩部',
+  knee: '膝部',
+  ankle: '踝部'
+};
+
 export default function Training() {
   const { planId } = useParams<{ planId: string }>();
   const navigate = useNavigate();
   const plans = useAppStore((s) => s.plans);
+  const patients = useAppStore((s) => s.patients);
   const currentPatient = useAppStore((s) => s.currentPatient);
   const addSession = useAppStore((s) => s.addSession);
   const setCurrentSession = useAppStore((s) => s.setCurrentSession);
+  const setCurrentPatient = useAppStore((s) => s.setCurrentPatient);
 
   const plan = plans.find((p) => p.id === planId);
   const [actionIndex, setActionIndex] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
-  const [cameraOn, setCameraOn] = useState(true);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState<'idle' | 'requesting' | 'active' | 'error' | 'no-device'>('idle');
+  const [cameraError, setCameraError] = useState('');
   const [results, setResults] = useState<ActionResult[]>([]);
   const [painLevel, setPainLevel] = useState<PainLevel>(0);
   const [showPainModal, setShowPainModal] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [showPatientSelect, setShowPatientSelect] = useState(false);
+  const [pendingResult, setPendingResult] = useState<ActionResult | null>(null);
   const startedAtRef = useRef<string>('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const currentAction = plan?.actions[actionIndex];
   const motion = useMotionSimulator({ action: currentAction!, isRunning });
@@ -61,11 +78,90 @@ export default function Training() {
   }, [plan]);
 
   useEffect(() => {
+    if (!plan) return;
+    const hasPatientInPlan = plan.patientId && patients.find((p) => p.id === plan.patientId);
+    const hasCurrentPatient = currentPatient;
+    if (!hasPatientInPlan && !hasCurrentPatient) {
+      setShowPatientSelect(true);
+    }
+  }, [plan, currentPatient, patients]);
+
+  useEffect(() => {
     if (!currentAction || !isRunning) return;
     if (motion.repCount >= currentAction.repetitions && motion.repCount > 0) {
       handleActionComplete();
     }
   }, [motion.repCount, isRunning, currentAction]);
+
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  const startCamera = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const hasCamera = devices.some((d) => d.kind === 'videoinput');
+      if (!hasCamera) {
+        setCameraStatus('no-device');
+        setCameraError('未检测到摄像头设备');
+        return;
+      }
+      setCameraStatus('requesting');
+      setCameraError('');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: 'user' },
+        audio: false
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraStatus('active');
+      setCameraOn(true);
+    } catch (err: any) {
+      console.error('Camera error:', err);
+      setCameraStatus('error');
+      if (err.name === 'NotAllowedError') {
+        setCameraError('摄像头权限被拒绝，请在浏览器设置中允许访问');
+      } else if (err.name === 'NotFoundError') {
+        setCameraStatus('no-device');
+        setCameraError('未找到可用的摄像头设备');
+      } else if (err.name === 'NotReadableError') {
+        setCameraError('摄像头被其他程序占用');
+      } else {
+        setCameraError(err.message || '无法访问摄像头');
+      }
+      setCameraOn(false);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraOn(false);
+    setCameraStatus('idle');
+    setCameraError('');
+  };
+
+  const selectPatient = (patient: Patient) => {
+    setCurrentPatient(patient);
+    setShowPatientSelect(false);
+  };
 
   const handleActionComplete = () => {
     setIsRunning(false);
@@ -82,26 +178,26 @@ export default function Training() {
       painLevel: painLevel,
       frames: motion.frames,
       startedAt: Date.now() - currentAction!.repetitions * 8000,
-      endedAt: Date.now()
+      endedAt: Date.now(),
+      targetAngle: currentAction!.targetAngle
     };
-    const newResults = [...results, result];
-    setResults(newResults);
+    setPendingResult(result);
     setShowPainModal(true);
   };
 
   const confirmPainAndNext = () => {
+    if (!pendingResult) return;
+    const resultWithPain = { ...pendingResult, painLevel };
+    const newResults = [...results, resultWithPain];
+    setResults(newResults);
     setShowPainModal(false);
-    const updatedResults = [...results];
-    if (updatedResults.length > 0) {
-      updatedResults[updatedResults.length - 1].painLevel = painLevel;
-      setResults(updatedResults);
-    }
+    setPendingResult(null);
+    setPainLevel(0);
 
     if (actionIndex >= plan!.actions.length - 1) {
-      finalizeSession(updatedResults);
+      finalizeSession(newResults);
     } else {
       setActionIndex((i) => i + 1);
-      setPainLevel(0);
     }
   };
 
@@ -121,7 +217,8 @@ export default function Training() {
       painLevel: painLevel,
       frames: motion.frames,
       startedAt: Date.now() - 5000,
-      endedAt: Date.now()
+      endedAt: Date.now(),
+      targetAngle: currentAction!.targetAngle
     };
     const newResults = [...results, result];
     setResults(newResults);
@@ -143,9 +240,11 @@ export default function Training() {
       finalResults.reduce((s, r) => s + r.painLevel, 0) / finalResults.length
     ) as PainLevel;
 
+    const effectivePatientId = plan!.patientId || currentPatient?.id || '';
+
     const session: TrainingSession = {
       id: `sess_${Date.now()}`,
-      patientId: currentPatient?.id || '',
+      patientId: effectivePatientId,
       planId: plan!.id,
       planName: plan!.name,
       bodyPart: plan!.bodyPart,
@@ -186,6 +285,8 @@ export default function Training() {
   const overallProgress = ((actionIndex + (isRunning ? motion.repCount / currentAction.repetitions : results.length > actionIndex ? 1 : 0)) / plan.actions.length) * 100;
   const repProgress = isRunning ? (motion.repCount / currentAction.repetitions) * 100 : results.length > actionIndex ? 100 : 0;
 
+  const effectivePatient = (plan?.patientId ? patients.find((p) => p.id === plan.patientId) : null) || currentPatient;
+
   return (
     <div style={{ position: 'relative', height: '100%' }}>
       <div className="flex justify-between items-center mb-16">
@@ -196,18 +297,45 @@ export default function Training() {
         </button>
         <div className="flex items-center gap-16">
           <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            患者：<span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{currentPatient?.name || '未指定'}</span>
+            患者：<span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{effectivePatient?.name || '未指定'}</span>
           </div>
           <span className="tag tag-blue">{plan.name}</span>
           <button
-            className="btn btn-sm btn-secondary"
-            onClick={() => setCameraOn((v) => !v)}
+            className={`btn btn-sm ${cameraStatus === 'error' || cameraStatus === 'no-device' ? 'btn-danger' : cameraStatus === 'requesting' ? 'btn-secondary' : cameraOn ? 'btn-success' : 'btn-secondary'}`}
+            onClick={cameraOn ? stopCamera : startCamera}
+            disabled={cameraStatus === 'requesting'}
           >
-            {cameraOn ? <Video size={16} /> : <VideoOff size={16} />}
-            {cameraOn ? '关闭' : '开启'}
+            {cameraStatus === 'requesting' ? (
+              <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> 请求中</>
+            ) : cameraOn ? (
+              <><Video size={16} /> 关闭摄像头</>
+            ) : (
+              <><VideoOff size={16} /> 开启摄像头</>
+            )}
           </button>
         </div>
       </div>
+
+      {(cameraStatus === 'error' || cameraStatus === 'no-device') && (
+        <div style={{
+          padding: '12px 16px',
+          marginBottom: 16,
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--accent-danger-bg)',
+          border: '1px solid var(--accent-danger)',
+          color: 'var(--accent-danger)',
+          fontSize: 13,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10
+        }}>
+          <AlertCircle size={18} />
+          <span>{cameraError}</span>
+          <button className="btn btn-sm btn-secondary" style={{ marginLeft: 'auto' }} onClick={startCamera}>
+            重试
+          </button>
+        </div>
+      )}
 
       <div style={{
         marginBottom: 20,
@@ -229,8 +357,54 @@ export default function Training() {
 
       <div className="row" style={{ alignItems: 'stretch' }}>
         <div style={{ gridColumn: 'span 8' }}>
-          <div className={`camera-area ${cameraOn ? 'connected' : ''}`}>
-            {cameraOn ? (
+          <div className={`camera-area ${cameraStatus === 'active' ? 'connected' : ''}`}>
+            {cameraStatus === 'active' ? (
+              <>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    transform: 'scaleX(-1)'
+                  }}
+                />
+                <div style={{
+                  position: 'absolute',
+                  top: 0, left: 0, right: 0, bottom: 0,
+                  pointerEvents: 'none'
+                }}>
+                  <div className={`stability-indicator ${motion.isStable ? 'stable' : 'unstable'}`}>
+                    <span className="stability-dot" />
+                    {motion.isStable ? '动作稳定' : '需调整姿势'}
+                  </div>
+                  <div className="angle-indicator">
+                    <div className="angle-label">当前角度</div>
+                    <div className="angle-value">{Math.round(motion.currentAngle)}°</div>
+                    <div className="angle-target">目标 {motion.targetAngle}°</div>
+                  </div>
+                  <div className="rep-counter">
+                    <div className="rep-label">次数</div>
+                    <div className="rep-value">
+                      {motion.repCount}/{currentAction.repetitions}
+                    </div>
+                  </div>
+                  <div className={`phase-badge ${motion.phase}`}>{phaseText[motion.phase]}</div>
+                  <div className="rhythm-bar">
+                    <div className="rhythm-fill" style={{ width: `${motion.rhythmScore}%` }} />
+                  </div>
+                </div>
+              </>
+            ) : cameraStatus === 'requesting' ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                <Loader2 size={48} style={{ margin: '0 auto 12px', animation: 'spin 1s linear infinite' }} />
+                <div style={{ fontSize: 14 }}>正在请求摄像头权限...</div>
+                <div style={{ fontSize: 12, marginTop: 6, opacity: 0.7 }}>请在弹出的对话框中点击"允许"</div>
+              </div>
+            ) : (
               <>
                 <div className="skeleton-avatar">
                   <SkeletonFigure
@@ -258,12 +432,23 @@ export default function Training() {
                 <div className="rhythm-bar">
                   <div className="rhythm-fill" style={{ width: `${motion.rhythmScore}%` }} />
                 </div>
+                <div style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  background: 'rgba(0,0,0,0.7)',
+                  backdropFilter: 'blur(8px)',
+                  padding: '10px 18px',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  pointerEvents: 'none'
+                }}>
+                  <VideoOff size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+                  摄像头未开启 - 显示模拟画面
+                </div>
               </>
-            ) : (
-              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-                <VideoOff size={48} style={{ display: 'block', margin: '0 auto 12px', opacity: 0.4 }} />
-                摄像头已关闭
-              </div>
             )}
           </div>
 
@@ -428,6 +613,81 @@ export default function Training() {
           </div>
         </div>
       </div>
+
+      {showPatientSelect && (
+        <div className="modal-overlay" onClick={() => {}}>
+          <div className="modal" style={{ maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">请选择训练患者</div>
+            </div>
+            <div className="modal-body">
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
+                本方案未关联固定患者，请选择本次训练对应的患者，以确保训练报告归属正确：
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+                {patients.map((p) => (
+                  <button
+                    key={p.id}
+                    className="flex items-center gap-12"
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--bg-primary)',
+                      border: '1px solid var(--border-color)',
+                      textAlign: 'left',
+                      color: 'inherit',
+                      transition: 'var(--transition)'
+                    }}
+                    onClick={() => selectPatient(p)}
+                  >
+                    <div style={{
+                      width: 40, height: 40, borderRadius: '50%',
+                      background: 'var(--gradient-primary)',
+                      color: 'white', fontWeight: 600, fontSize: 14,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      {p.name.charAt(0)}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {p.name}
+                        <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                          {p.gender} · {p.age}岁
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {p.injuryType} · {bodyPartMap[p.bodyPart]}
+                      </div>
+                    </div>
+                    <Users size={18} style={{ color: 'var(--text-dim)' }} />
+                  </button>
+                ))}
+              </div>
+              {patients.length === 0 && (
+                <div className="empty-state" style={{ padding: '30px 10px' }}>
+                  <Users />
+                  <div className="empty-title">暂无患者档案</div>
+                  <div className="empty-desc">请先在患者档案模块创建患者</div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => navigate('/plans')}>
+                返回方案
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => navigate('/patients')}
+                disabled={patients.length > 0}
+                style={{ opacity: patients.length > 0 ? 0.5 : 1, cursor: patients.length > 0 ? 'not-allowed' : 'pointer' }}
+              >
+                新建患者
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPainModal && (
         <div className="modal-overlay" onClick={() => {}}>

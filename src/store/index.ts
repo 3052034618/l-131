@@ -8,6 +8,50 @@ import type {
   BodyPart
 } from '../types';
 
+const STORAGE_KEY = 'smart-rehab-data-v1';
+const STORAGE_VERSION = 1;
+
+interface PersistedData {
+  version: number;
+  patients: Patient[];
+  plans: TrainingPlan[];
+  sessions: TrainingSession[];
+  savedAt: number;
+}
+
+const loadFromStorage = (): { patients: Patient[]; plans: TrainingPlan[]; sessions: TrainingSession[] } | null => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data: PersistedData = JSON.parse(raw);
+    if (!data || data.version !== STORAGE_VERSION) return null;
+    if (!Array.isArray(data.patients) || !Array.isArray(data.plans) || !Array.isArray(data.sessions)) return null;
+    return {
+      patients: data.patients,
+      plans: data.plans,
+      sessions: data.sessions
+    };
+  } catch (e) {
+    console.warn('Failed to load from localStorage:', e);
+    return null;
+  }
+};
+
+const saveToStorage = (state: Pick<AppState, 'patients' | 'plans' | 'sessions'>) => {
+  try {
+    const data: PersistedData = {
+      version: STORAGE_VERSION,
+      patients: state.patients,
+      plans: state.plans,
+      sessions: state.sessions,
+      savedAt: Date.now()
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Failed to save to localStorage:', e);
+  }
+};
+
 interface AppState {
   patients: Patient[];
   plans: TrainingPlan[];
@@ -329,10 +373,24 @@ export const getDefaultActionsByBodyPart = (bodyPart: BodyPart): ActionConfig[] 
   }
 };
 
+const getInitialState = () => {
+  const stored = loadFromStorage();
+  if (stored && (stored.patients.length > 0 || stored.plans.length > 0 || stored.sessions.length > 0)) {
+    return stored;
+  }
+  return {
+    patients: mockPatients,
+    plans: mockPlans,
+    sessions: mockSessions
+  };
+};
+
+const initialData = getInitialState();
+
 export const useAppStore = create<AppState>((set) => ({
-  patients: mockPatients,
-  plans: mockPlans,
-  sessions: mockSessions,
+  patients: initialData.patients,
+  plans: initialData.plans,
+  sessions: initialData.sessions,
   currentPatient: null,
   currentPlan: null,
   currentSession: null,
@@ -343,43 +401,63 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentSession: (session) => set({ currentSession: session }),
 
   addPatient: (data) =>
-    set((state) => ({
-      patients: [
-        ...state.patients,
-        {
-          ...data,
-          id: `p_${Date.now()}`,
-          createdAt: new Date().toISOString().slice(0, 10)
-        }
-      ]
-    })),
+    set((state) => {
+      const newState = {
+        patients: [
+          ...state.patients,
+          {
+            ...data,
+            id: `p_${Date.now()}`,
+            createdAt: new Date().toISOString().slice(0, 10)
+          }
+        ]
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    }),
 
   updatePatient: (id, data) =>
-    set((state) => ({
-      patients: state.patients.map((p) => (p.id === id ? { ...p, ...data } : p))
-    })),
+    set((state) => {
+      const newState = {
+        patients: state.patients.map((p) => (p.id === id ? { ...p, ...data } : p))
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    }),
 
   deletePatient: (id) =>
-    set((state) => ({
-      patients: state.patients.filter((p) => p.id !== id)
-    })),
+    set((state) => {
+      const newState = {
+        patients: state.patients.filter((p) => p.id !== id)
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    }),
 
   addPlan: (plan) =>
-    set((state) => ({
-      plans: [
-        ...state.plans,
-        {
-          ...plan,
-          id: `plan_${Date.now()}`,
-          createdAt: new Date().toISOString().slice(0, 10)
-        }
-      ]
-    })),
+    set((state) => {
+      const newState = {
+        plans: [
+          ...state.plans,
+          {
+            ...plan,
+            id: `plan_${Date.now()}`,
+            createdAt: new Date().toISOString().slice(0, 10)
+          }
+        ]
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    }),
 
   addSession: (session) =>
-    set((state) => ({
-      sessions: [...state.sessions, session]
-    })),
+    set((state) => {
+      const newState = {
+        sessions: [...state.sessions, session]
+      };
+      saveToStorage({ ...state, ...newState });
+      return newState;
+    }),
 
   setCurrentActionIndex: (index) => set({ currentActionIndex: index })
 }));
