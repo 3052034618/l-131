@@ -48,6 +48,7 @@ export default function Training() {
   const navigate = useNavigate();
   const plans = useAppStore((s) => s.plans);
   const patients = useAppStore((s) => s.patients);
+  const sessions = useAppStore((s) => s.sessions);
   const currentPatient = useAppStore((s) => s.currentPatient);
   const addSession = useAppStore((s) => s.addSession);
   const setCurrentSession = useAppStore((s) => s.setCurrentSession);
@@ -65,12 +66,17 @@ export default function Training() {
   const [showSummary, setShowSummary] = useState(false);
   const [showPatientSelect, setShowPatientSelect] = useState(false);
   const [pendingResult, setPendingResult] = useState<ActionResult | null>(null);
+  const [sessionPatient, setSessionPatient] = useState<Patient | null>(null);
+  const [finishedSessionId, setFinishedSessionId] = useState<string | null>(null);
   const startedAtRef = useRef<string>('');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const actionCompletedRef = useRef<boolean>(false);
 
   const currentAction = plan?.actions[actionIndex];
   const motion = useMotionSimulator({ action: currentAction!, isRunning });
+
+  const finishedSession = finishedSessionId ? sessions.find((s) => s.id === finishedSessionId) : null;
 
   useEffect(() => {
     if (!plan || !currentAction) return;
@@ -80,15 +86,28 @@ export default function Training() {
   useEffect(() => {
     if (!plan) return;
     const hasPatientInPlan = plan.patientId && patients.find((p) => p.id === plan.patientId);
-    const hasCurrentPatient = currentPatient;
-    if (!hasPatientInPlan && !hasCurrentPatient) {
-      setShowPatientSelect(true);
+    if (hasPatientInPlan) {
+      const p = patients.find((x) => x.id === plan.patientId)!;
+      setSessionPatient(p);
+      setShowPatientSelect(false);
+      return;
     }
-  }, [plan, currentPatient, patients]);
+    setCurrentPatient(null);
+    setSessionPatient(null);
+    setShowPatientSelect(true);
+  }, [planId]);
 
   useEffect(() => {
-    if (!currentAction || !isRunning) return;
-    if (motion.repCount >= currentAction.repetitions && motion.repCount > 0) {
+    actionCompletedRef.current = false;
+  }, [actionIndex]);
+
+  useEffect(() => {
+    if (!currentAction || !isRunning) {
+      actionCompletedRef.current = false;
+      return;
+    }
+    if (motion.repCount >= currentAction.repetitions && motion.repCount > 0 && !actionCompletedRef.current) {
+      actionCompletedRef.current = true;
       handleActionComplete();
     }
   }, [motion.repCount, isRunning, currentAction]);
@@ -159,6 +178,7 @@ export default function Training() {
   };
 
   const selectPatient = (patient: Patient) => {
+    setSessionPatient(patient);
     setCurrentPatient(patient);
     setShowPatientSelect(false);
   };
@@ -240,7 +260,7 @@ export default function Training() {
       finalResults.reduce((s, r) => s + r.painLevel, 0) / finalResults.length
     ) as PainLevel;
 
-    const effectivePatientId = plan!.patientId || currentPatient?.id || '';
+    const effectivePatientId = sessionPatient?.id || plan!.patientId || '';
 
     const session: TrainingSession = {
       id: `sess_${Date.now()}`,
@@ -258,6 +278,7 @@ export default function Training() {
     };
     addSession(session);
     setCurrentSession(session);
+    setFinishedSessionId(session.id);
     setShowSummary(true);
   };
 
@@ -285,7 +306,7 @@ export default function Training() {
   const overallProgress = ((actionIndex + (isRunning ? motion.repCount / currentAction.repetitions : results.length > actionIndex ? 1 : 0)) / plan.actions.length) * 100;
   const repProgress = isRunning ? (motion.repCount / currentAction.repetitions) * 100 : results.length > actionIndex ? 100 : 0;
 
-  const effectivePatient = (plan?.patientId ? patients.find((p) => p.id === plan.patientId) : null) || currentPatient;
+  const effectivePatient = sessionPatient || (plan?.patientId ? patients.find((p) => p.id === plan.patientId) : null) || null;
 
   return (
     <div style={{ position: 'relative', height: '100%' }}>
@@ -514,7 +535,14 @@ export default function Training() {
               {!isRunning ? (
                 <button
                   className="btn btn-success btn-block"
-                  onClick={() => setIsRunning(true)}
+                  onClick={() => {
+                    if (!effectivePatient) {
+                      setShowPatientSelect(true);
+                      return;
+                    }
+                    actionCompletedRef.current = false;
+                    setIsRunning(true);
+                  }}
                   style={{ padding: '12px' }}
                 >
                   <PlayCircle size={20} /> {results.length > actionIndex ? '重做本动作' : '开始训练'}
@@ -745,31 +773,25 @@ export default function Training() {
               <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 20 }}>
                 <div className="stat-card success" style={{ padding: 16 }}>
                   <div className="stat-label">总分</div>
-                  <div className="stat-value">{Math.round(
-                    results.reduce((s, r) => s + r.overallScore, 0) / Math.max(results.length, 1)
-                  )}</div>
+                  <div className="stat-value">{finishedSession?.totalScore ?? 0}</div>
                 </div>
                 <div className="stat-card" style={{ padding: 16 }}>
                   <div className="stat-label">完成率</div>
                   <div className="stat-value">
-                    {Math.round(
-                      (results.reduce((s, r) => s + r.completedReps, 0) /
-                        Math.max(results.reduce((s, r) => s + r.totalReps, 0), 1)) *
-                        100
-                    )}%
+                    {finishedSession?.completionRate ?? 0}%
                   </div>
                 </div>
                 <div className="stat-card purple" style={{ padding: 16 }}>
                   <div className="stat-label">平均疼痛</div>
                   <div className="stat-value">
-                    {(results.reduce((s, r) => s + r.painLevel, 0) / Math.max(results.length, 1)).toFixed(1)}
+                    {finishedSession?.overallPainLevel ?? 0}
                   </div>
                 </div>
               </div>
 
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>各动作评分</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-                {results.map((r) => (
+                {(finishedSession?.results || []).map((r) => (
                   <div key={r.actionId} className="flex items-center gap-12" style={{
                     padding: '10px 14px',
                     background: 'var(--bg-primary)',
@@ -785,9 +807,10 @@ export default function Training() {
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => navigate('/plans')}>返回方案</button>
               <button className="btn btn-primary" onClick={() => {
-                const s = useAppStore.getState().sessions[useAppStore.getState().sessions.length - 1];
-                navigate(`/replay/${s.id}`);
-              }}>
+                if (finishedSessionId) {
+                  navigate(`/replay/${finishedSessionId}`);
+                }
+              }} disabled={!finishedSessionId}>
                 查看回放
               </button>
             </div>
