@@ -74,7 +74,7 @@ export default function Training() {
   const actionCompletedRef = useRef<boolean>(false);
 
   const currentAction = plan?.actions[actionIndex];
-  const motion = useMotionSimulator({ action: currentAction!, isRunning });
+  const motion = useMotionSimulator({ action: currentAction, isRunning });
 
   const finishedSession = finishedSessionId ? sessions.find((s) => s.id === finishedSessionId) : null;
 

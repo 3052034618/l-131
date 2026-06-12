@@ -13,15 +13,15 @@ export interface SimulatedMotion {
 }
 
 interface Options {
-  action: ActionConfig;
+  action?: ActionConfig | null;
   isRunning: boolean;
 }
 
 export const useMotionSimulator = ({ action, isRunning }: Options) => {
   const [motion, setMotion] = useState<SimulatedMotion>({
     currentAngle: 0,
-    targetAngle: action.targetAngle,
-    deviation: action.targetAngle,
+    targetAngle: action?.targetAngle ?? 0,
+    deviation: action?.targetAngle ?? 0,
     isStable: false,
     rhythmScore: 0,
     phase: 'rest',
@@ -30,7 +30,7 @@ export const useMotionSimulator = ({ action, isRunning }: Options) => {
   });
 
   useEffect(() => {
-    if (!isRunning) return;
+    if (!isRunning || !action) return;
 
     const phaseDuration = {
       up: 1500,
