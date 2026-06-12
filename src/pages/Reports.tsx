@@ -62,19 +62,20 @@ export default function Reports() {
 
   const allTrend = useMemo(() => {
     const data: { date: string; score: number; rate: number }[] = [];
-    const grouped = new Map<string, number[]>();
+    const grouped = new Map<string, { scores: number[]; rates: number[] }>();
     sessions.forEach((s) => {
       const d = s.startedAt.slice(0, 10);
-      if (!grouped.has(d)) grouped.set(d, []);
-      grouped.get(d)!.push(s.totalScore);
+      if (!grouped.has(d)) grouped.set(d, { scores: [], rates: [] });
+      grouped.get(d)!.scores.push(s.totalScore);
+      grouped.get(d)!.rates.push(s.completionRate);
     });
     const sortedDates = Array.from(grouped.keys()).sort();
-    sortedDates.slice(-14).forEach((d, i) => {
-      const scores = grouped.get(d)!;
+    sortedDates.slice(-14).forEach((d) => {
+      const { scores, rates } = grouped.get(d)!;
       data.push({
         date: d.slice(5),
         score: Math.round(scores.reduce((a, b) => a + b, 0) / scores.length),
-        rate: 85 + i * 0.5 + Math.random() * 5
+        rate: Math.round(rates.reduce((a, b) => a + b, 0) / rates.length)
       });
     });
     return data;

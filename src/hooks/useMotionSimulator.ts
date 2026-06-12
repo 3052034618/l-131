@@ -44,8 +44,14 @@ export const useMotionSimulator = ({ action, isRunning }: Options) => {
     let currentPhase: SimulatedMotion['phase'] = 'up';
     const frames: MotionFrame[] = [];
     let frameCount = 0;
+    let shouldStop = false;
 
     const interval = setInterval(() => {
+      if (shouldStop) {
+        clearInterval(interval);
+        return;
+      }
+
       const now = Date.now();
       const elapsed = now - phaseStart;
       const duration = phaseDuration[currentPhase];
@@ -65,11 +71,10 @@ export const useMotionSimulator = ({ action, isRunning }: Options) => {
           case 'rest':
             rep++;
             currentPhase = 'up';
+            if (rep >= action.repetitions) {
+              shouldStop = true;
+            }
             break;
-        }
-        if (rep >= action.repetitions && currentPhase === 'up') {
-          clearInterval(interval);
-          return;
         }
       }
 
